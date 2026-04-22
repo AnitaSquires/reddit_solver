@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
@@ -8,6 +10,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 URL = "https://www.reddit.com/r/ColorPuzzleGame/comments/1sjth6v/daily_color_puzzle_april_13_2026/"
 COLORBLIND_SELECTOR = 'footer button[title="Toggle colorblind mode - show letters on colors"]'
+SCREENSHOT_PATH = Path("puzzle_board.png")
 
 
 def build_driver() -> webdriver.Chrome:
@@ -144,7 +147,15 @@ def click_colorblind_toggle_recursive(driver: webdriver.Chrome, max_depth: int =
     return recurse(0, "root")
 
 
-def run() -> None:
+def capture_board(driver: webdriver.Chrome, path: Path = SCREENSHOT_PATH) -> str:
+    """
+    Save a screenshot of the current page and return the file path.
+    """
+    driver.save_screenshot(str(path))
+    return str(path)
+
+
+def run() -> str:
     driver = build_driver()
     try:
         driver.get("https://www.reddit.com")
@@ -157,15 +168,15 @@ def run() -> None:
 
         if not click_colorblind_toggle_recursive(driver):
             print("Could not find the colorblind toggle anywhere.")
-            return
+        else:
+            time.sleep(2)
 
-        time.sleep(2)
-
-        # carry on with screenshot / crop / extract here
+        return capture_board(driver)
 
     finally:
         driver.quit()
 
 
 if __name__ == "__main__":
-    run()
+    screenshot_path = run()
+    print(f"Saved screenshot to: {screenshot_path}")

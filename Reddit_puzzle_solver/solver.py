@@ -1,19 +1,19 @@
 from __future__ import annotations
 
+from collections import Counter
 from math import inf
-from typing import List, Tuple, Optional, Dict
+from typing import Dict, List, Optional, Tuple
 
-Tube = Tuple[str, ...]          # bottom -> top
-State = Tuple[Tube, ...]
-Move = Tuple[int, int]          # (from_tube, to_tube)
+from board_model import State, Tube
 
+Move = Tuple[int, int]
 CAPACITY = 4
-PRINT_EVERY = 100_000
-MAX_NODES = 10_000_000
 
 
-class SolutionFound(Exception):
-    pass
+def validate_state(state: State) -> tuple[bool, Counter]:
+    counts = Counter(c for tube in state for c in tube)
+    valid = len(counts) == 10 and all(v == 4 for v in counts.values())
+    return valid, counts
 
 
 def is_solved(state: State) -> bool:
@@ -41,11 +41,7 @@ def active_run_length(tube: Tube) -> int:
 
 
 def can_pour(src: Tube, dst: Tube) -> bool:
-    if not src:
-        return False
-    if len(dst) >= CAPACITY:
-        return False
-    return (not dst) or (dst[0] == src[0])
+    return bool(src) and len(dst) < CAPACITY and (not dst or dst[0] == src[0])
 
 
 def apply_move(state: State, i: int, j: int) -> Optional[State]:
@@ -59,18 +55,13 @@ def apply_move(state: State, i: int, j: int) -> Optional[State]:
     if not can_pour(tuple(src), tuple(dst)):
         return None
 
-    color = src[0]
     run = active_run_length(tuple(src))
-    space = CAPACITY - len(dst)
-    amount = min(run, space)
+    amount = min(run, CAPACITY - len(dst))
 
     if amount <= 0:
         return None
 
     moved = src[:amount]
-    if any(c != color for c in moved):
-        return None
-
     del src[:amount]
     dst[:0] = moved
 
@@ -85,9 +76,6 @@ def legal_moves(state: State) -> List[Move]:
         if not state[i]:
             continue
 
-        if len(state[i]) == CAPACITY and len(set(state[i])) == 1:
-            continue
-
         seen_empty = False
 
         for j in range(n):
@@ -96,7 +84,6 @@ def legal_moves(state: State) -> List[Move]:
             if not can_pour(state[i], state[j]):
                 continue
 
-            # Empty tubes are symmetric; keep only one empty destination per source.
             if not state[j]:
                 if seen_empty:
                     continue
@@ -108,10 +95,6 @@ def legal_moves(state: State) -> List[Move]:
 
 
 def heuristic(state: State) -> int:
-    """
-    Small admissible heuristic:
-    count the number of color blocks that still need merging.
-    """
     score = 0
     for tube in state:
         if not tube:
@@ -123,29 +106,21 @@ def heuristic(state: State) -> int:
         for a, b in zip(tube, tube[1:]):
             if a != b:
                 blocks += 1
-
         score += blocks - 1
 
     return score
 
 
+class SolutionFound(Exception):
+    pass
+
+
 def solve(initial: State) -> Optional[List[Move]]:
-    """
-    IDA* search. Returns the move list, or None if no solution is found.
-    """
     path: List[Move] = []
-    nodes = 0
     solution: Optional[List[Move]] = None
 
     def search(state: State, g: int, threshold: int, seen: Dict[State, int]) -> int:
-        nonlocal nodes, solution
-
-        nodes += 1
-        if MAX_NODES is not None and nodes >= MAX_NODES:
-            raise RuntimeError(f"Stopped after {MAX_NODES} nodes without finding a solution.")
-
-        if PRINT_EVERY and nodes % PRINT_EVERY == 0:
-            print(f"Explored: {nodes}, depth: {g}, threshold: {threshold}")
+        nonlocal solution
 
         f = g + heuristic(state)
         if f > threshold:
@@ -155,8 +130,8 @@ def solve(initial: State) -> Optional[List[Move]]:
             solution = path.copy()
             raise SolutionFound
 
-        prev_best_g = seen.get(state)
-        if prev_best_g is not None and prev_best_g <= g:
+        prev_best = seen.get(state)
+        if prev_best is not None and prev_best <= g:
             return inf
         seen[state] = g
 
@@ -179,61 +154,27 @@ def solve(initial: State) -> Optional[List[Move]]:
     threshold = heuristic(initial)
 
     while True:
-        print(f"\nStarting iteration with threshold: {threshold}")
         seen: Dict[State, int] = {}
 
         try:
             result = search(initial, 0, threshold, seen)
         except SolutionFound:
-            print(f"Solved after exploring {nodes} states")
             return solution
-        except RuntimeError as e:
-            print(str(e))
-            return None
 
         if result == inf:
-            print("No solution found.")
             return None
 
-        print(f"Increasing threshold -> {result}")
         threshold = int(result)
 
 
-def pretty_moves(moves: List[Move]) -> None:
+def print_state(state: State) -> None:
+    print("initial_state = (")
+    for tube in state:
+        print(f"    {tube if tube else '()'},")
+    print(")")
+
+
+def print_moves(moves: List[Move]) -> None:
+    print(f"\nSolved in {len(moves)} moves:")
     for i, (a, b) in enumerate(moves, 1):
         print(f"{i}. {a + 1} -> {b + 1}")
-
-
-def show_tubes(state: State) -> None:
-    for idx, tube in enumerate(state):
-        print(f"{idx}: {list(tube)}")
-
-
-if __name__ == "__main__":
-    # Replace this with the static puzzle combination you want to solve.
-    # Bottom -> top.
-    initial_state: State = (
-    ("P", "Y", "M", "G"),
-    ("B", "W", "P", "R"),
-    ("R", "C", "B", "P"),
-    ("G", "Y", "G", "O"),
-    ("L", "W", "M", "G"),
-    ("B", "W", "Y", "M"),
-    ("Y", "B", "C", "C"),
-    ("C", "O", "R", "W"),
-    ("L", "R", "O", "P"),
-    ("M", "L", "L", "O"),
-    (),
-    (),
-    )
-
-    print("Starting board:")
-    show_tubes(initial_state)
-
-    moves = solve(initial_state)
-
-    if moves is None:
-        print("No solution returned.")
-    else:
-        print(f"\nSolved in {len(moves)} moves:")
-        pretty_moves(moves)
