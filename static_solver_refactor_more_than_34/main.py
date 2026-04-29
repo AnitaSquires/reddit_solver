@@ -8,16 +8,16 @@ if __name__ == "__main__":
     # Replace this with the static puzzle combination you want to solve.
     # Bottom -> top.
     initial_state = (
-        ("Y", "C", "Y", "P"),
-        ("R", "G", "B", "L"),
-        ("L", "M", "G", "W"),
-        ("O", "B", "Y", "L"),
-        ("C", "O", "W", "G"),
-        ("P", "L", "G", "W"),
-        ("O", "O", "R", "M"),
-        ("P", "Y", "C", "W"),
-        ("B", "M", "R", "C"),
-        ("R", "B", "M", "P"),
+        ("R", "G", "P", "C"),
+        ("O", "M", "W", "Y"),
+        ("Y", "B", "Y", "O"),
+        ("P", "C", "W", "O"),
+        ("C", "L", "R", "L"),
+        ("O", "L", "M", "G"),
+        ("W", "L", "R", "G"),
+        ("M", "B", "P", "M"),
+        ("Y", "C", "W", "R"),
+        ("B", "B", "P", "G"),
         (),
         (),
     )

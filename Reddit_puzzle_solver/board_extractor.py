@@ -117,8 +117,8 @@ def detect_board_bounds(img: np.ndarray) -> tuple[int, int, int, int]:
     return x0, y0, x1, y1
 
 
-def classify_slot(img: np.ndarray, cx: int, cy: int, cell_w: float, empty_max_channel: int) -> Optional[str]:
-    votes: list[str] = []
+def classify_slot(img, cx, cy, cell_w, empty_max_channel):
+    votes = []
 
     for dx_frac in SLOT_SAMPLE_OFFSETS:
         x = int(round(cx + dx_frac * cell_w))
@@ -135,7 +135,8 @@ def classify_slot(img: np.ndarray, cx: int, cy: int, cell_w: float, empty_max_ch
     return Counter(votes).most_common(1)[0][0]
 
 
-def extract_state_from_board(path: str, empty_max_channel: int, rows: int = 3, cols: int = 4) -> State:
+# ✅ FIXED: now returns BoardModel
+def extract_state_from_board(path: str, empty_max_channel: int, rows: int = 3, cols: int = 4) -> BoardModel:
     img_bgr = cv2.imread(path)
     if img_bgr is None:
         raise FileNotFoundError(f"Could not read image: {path}")
@@ -167,21 +168,22 @@ def extract_state_from_board(path: str, empty_max_channel: int, rows: int = 3, c
             column.set_rgb(slot_index, rgb)
             column.set_token(slot_index, token)
 
-    return model.to_state()
+    return model
 
 
-def validate_state(state: State, forced_empty_columns: int = 2) -> tuple[bool, Counter]:
+def validate_state(state: State, forced_empty_columns: int = 2):
     counts = Counter(c for tube in state for c in tube)
-
     valid_counts = len(counts) == 10 and all(v == 4 for v in counts.values())
     valid_trailing_empties = all(not tube for tube in state[-forced_empty_columns:])
-
     return valid_counts and valid_trailing_empties, counts
 
 
-def extract_state_with_recheck(path: str, rows: int = 3, cols: int = 4) -> State:
+# ✅ CLEANED + FIXED
+def extract_state_with_recheck(path: str, rows: int = 3, cols: int = 4) -> BoardModel:
     for empty_max_channel in EMPTY_MAX_CHANNEL_OPTIONS:
-        state = extract_state_from_board(path, empty_max_channel, rows=rows, cols=cols)
+        model = extract_state_from_board(path, empty_max_channel, rows=rows, cols=cols)
+        state = model.to_state()
+
         valid, counts = validate_state(state, forced_empty_columns=2)
 
         print(f"\nTrying EMPTY_MAX_CHANNEL={empty_max_channel}")
@@ -191,12 +193,9 @@ def extract_state_with_recheck(path: str, rows: int = 3, cols: int = 4) -> State
 
         if valid:
             print("Board validated successfully.")
-            return state
+            return model
 
-    raise ValueError(
-        "Could not extract a valid board state. "
-        "Colour counts did not balance after retries."
-    )
+    raise ValueError("Could not extract a valid board state.")
 
 
 def print_state(state: State) -> None:
