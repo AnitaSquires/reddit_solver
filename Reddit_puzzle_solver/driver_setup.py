@@ -4,135 +4,131 @@ import time
 from pathlib import Path
 
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 
-URL = "https://www.reddit.com/r/ColorPuzzleGame/comments/1sjth6v/daily_color_puzzle_april_13_2026/"
-COLORBLIND_SELECTOR = 'footer button[title="Toggle colorblind mode - show letters on colors"]'
+URL = "https://www.reddit.com/r/ColorPuzzleGame/comments/1syh707/daily_color_puzzle_april_29_2026/"
 SCREENSHOT_PATH = Path("puzzle_board.png")
 
 
+# ----------------------------------------
+# DRIVER SETUP
+# ----------------------------------------
 def build_driver() -> webdriver.Chrome:
     options = Options()
     options.add_argument("--start-maximized")
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
+    options.add_argument("--disable-blink-features=AutomationControlled")
     return webdriver.Chrome(options=options)
 
 
+# ----------------------------------------
+# COOKIE HANDLING
+# ----------------------------------------
 def clear_cookie_overlays(driver: webdriver.Chrome) -> None:
-    button_xpaths = [
-        "//button[contains(., 'Accept')]",
-        "//button[contains(., 'I agree')]",
-        "//button[contains(., 'Agree')]",
-        "//button[contains(., 'Accept all')]",
-        "//button[contains(., 'Allow all')]",
-        "//button[contains(., 'OK')]",
-        "//button[contains(., 'Got it')]",
-    ]
+    print("🍪 Attempting to clear cookie modal...")
 
-    for xpath in button_xpaths:
-        try:
-            btn = WebDriverWait(driver, 2).until(lambda d: d.find_element(By.XPATH, xpath))
-            driver.execute_script("arguments[0].click();", btn)
-            print("Accepted cookies via button")
-            time.sleep(1.0)
-            return
-        except Exception:
-            pass
-
-    driver.execute_script(
-        """
-        const selectors = [
-            '[role="dialog"]',
-            '[aria-modal="true"]',
-            '[id*="cookie"]',
-            '[class*="cookie"]',
-            '[id*="consent"]',
-            '[class*="consent"]',
-            '[id*="gdpr"]',
-            '[class*="gdpr"]'
-        ];
-
-        selectors.forEach(sel => {
-            document.querySelectorAll(sel).forEach(el => {
-                try { el.remove(); } catch (e) {}
-            });
-        });
-
-        document.body.style.overflow = 'auto';
-        document.documentElement.style.overflow = 'auto';
-        """
-    )
-    time.sleep(1.0)
-
-
-def click_in_current_context(driver: webdriver.Chrome) -> bool:
-    """
-    Search current document + open shadow roots only.
-    """
     js = """
-    const selector = arguments[0];
+    function clickCookieButtons(root) {
+        const buttons = root.querySelectorAll('button');
 
-    function search(root) {
-      try {
-        const hit = root.querySelector(selector);
-        if (hit) return hit;
+        for (const btn of buttons) {
+            const text = (btn.innerText || '').toLowerCase();
 
-        const all = root.querySelectorAll('*');
-        for (const el of all) {
-          if (el.shadowRoot) {
-            const found = search(el.shadowRoot);
-            if (found) return found;
-          }
+            if (
+                text.includes('accept') ||
+                text.includes('agree') ||
+                text.includes('allow')
+            ) {
+                btn.click();
+                return true;
+            }
         }
-      } catch (e) {}
-      return null;
+
+        for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) {
+                const found = clickCookieButtons(el.shadowRoot);
+                if (found) return true;
+            }
+        }
+
+        return false;
     }
 
-    return search(document);
+    return clickCookieButtons(document);
     """
 
     try:
-        btn = driver.execute_script(js, COLORBLIND_SELECTOR)
-        if btn:
-            driver.execute_script("arguments[0].click();", btn)
-            return True
-    except Exception:
-        pass
+        clicked = driver.execute_script(js)
 
-    return False
+        if clicked:
+            print("✅ Cookie modal accepted")
+            time.sleep(1)
+            return
 
+        print("⚠️ No cookie button found — removing overlay manually")
+
+        driver.execute_script("""
+            document.querySelectorAll('[role="dialog"]').forEach(el => el.remove());
+            document.body.style.overflow = 'auto';
+        """)
+
+        time.sleep(1)
+
+    except Exception as e:
+        print("❌ Cookie handling failed:", e)
+
+
+# ----------------------------------------
+# BOARD CAPTURE
+# ----------------------------------------
 def capture_board(driver: webdriver.Chrome, path: Path = SCREENSHOT_PATH) -> str:
-    """
-    Save a screenshot of the current page and return the file path.
-    """
-    driver.save_screenshot(str(path))
-    return str(path)
+    print("🔍 Attempting to locate puzzle board...")
+
+    try:
+        # 🎯 Target the Devvit container directly
+        element = driver.find_element("css selector", "devvit2-surface")
+
+        print("✅ Devvit surface FOUND — capturing element screenshot")
+        element.screenshot(str(path))
+        print(f"📸 Saved board screenshot to: {path}")
+        return str(path)
+
+    except Exception as e:
+        print("❌ Could not find devvit2-surface:", e)
+
+        # fallback debug screenshot
+        debug_path = Path("debug_full_page.png")
+        driver.save_screenshot(str(debug_path))
+        print(f"📸 Debug screenshot saved to: {debug_path}")
+
+        return str(debug_path)
 
 
+# ----------------------------------------
+# MAIN RUN PIPELINE
+# ----------------------------------------
 def run() -> str:
     driver = build_driver()
+
     try:
-        driver.get("https://www.reddit.com")
-        driver.delete_all_cookies()
-
         driver.get(URL)
-        time.sleep(5)
 
+        # Wait for page load
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+
+        # Clear cookies
+        clear_cookie_overlays(driver)
+        time.sleep(1)
         clear_cookie_overlays(driver)
 
-        if not click_colorblind_toggle_recursive(driver):
-            print("Could not find the colorblind toggle anywhere.")
-        else:
-            time.sleep(2)
+        print("⏳ Waiting for puzzle to render...")
+
+        # ✅ IMPORTANT: simple wait instead of DOM detection
+        time.sleep(3)
 
         return capture_board(driver)
 
     finally:
         driver.quit()
-
-

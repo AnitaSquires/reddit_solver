@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Optional, Tuple
+from typing import Tuple
 
 import cv2
 import numpy as np
@@ -11,8 +11,8 @@ from board_model import BoardModel, State
 RGB = Tuple[int, int, int]
 
 PATCH_RADIUS = 4
-SAMPLE_Y_FRACS = [0.18, 0.43, 0.67, 0.90]
-SLOT_SAMPLE_OFFSETS = [-0.18, -0.08, 0.0, 0.08, 0.18]
+SAMPLE_Y_FRACS = [0.15, 0.38, 0.62, 0.85]
+SLOT_SAMPLE_OFFSETS = [-0.08, 0.0, 0.08]
 
 PALETTE = {
     "R": (236, 72, 57),
@@ -30,6 +30,9 @@ PALETTE = {
 EMPTY_MAX_CHANNEL_OPTIONS = [55, 65, 75, 85]
 
 
+# ----------------------------------------
+# IMAGE HELPERS
+# ----------------------------------------
 def patch_rgb(img: np.ndarray, x: int, y: int, radius: int = PATCH_RADIUS) -> RGB:
     h, w, _ = img.shape
     x1 = max(0, x - radius)
@@ -51,20 +54,6 @@ def rgb_to_lab(rgb: RGB) -> Tuple[int, int, int]:
 PALETTE_LAB = {token: rgb_to_lab(rgb) for token, rgb in PALETTE.items()}
 
 
-def is_empty_rgb(rgb: RGB, empty_max_channel: int) -> bool:
-    r, g, b = rgb
-
-    if max(r, g, b) < empty_max_channel:
-        return True
-
-    mn = min(r, g, b)
-    mx = max(r, g, b)
-    if mx > 170 and (mx - mn) < 18:
-        return True
-
-    return False
-
-
 def closest_color(rgb: RGB) -> str:
     lab = rgb_to_lab(rgb)
     best_token = "?"
@@ -83,38 +72,18 @@ def closest_color(rgb: RGB) -> str:
     return best_token
 
 
-def detect_board_bounds(img: np.ndarray) -> tuple[int, int, int, int]:
-    lum = 0.2126 * img[:, :, 0] + 0.7152 * img[:, :, 1] + 0.0722 * img[:, :, 2]
-    mask = (lum < 95).astype(np.uint8)
+def is_empty_rgb(rgb: RGB, empty_max_channel: int) -> bool:
+    r, g, b = rgb
 
-    kernel = np.ones((9, 9), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    if max(r, g, b) < empty_max_channel:
+        return True
 
-    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    mn = min(r, g, b)
+    mx = max(r, g, b)
+    if mx > 170 and (mx - mn) < 18:
+        return True
 
-    best_idx = -1
-    best_area = 0
-    for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area > best_area:
-            best_area = area
-            best_idx = i
-
-    if best_idx == -1 or best_area < 10000:
-        return 0, 0, img.shape[1], img.shape[0]
-
-    x = stats[best_idx, cv2.CC_STAT_LEFT]
-    y = stats[best_idx, cv2.CC_STAT_TOP]
-    w = stats[best_idx, cv2.CC_STAT_WIDTH]
-    h = stats[best_idx, cv2.CC_STAT_HEIGHT]
-
-    pad = 10
-    x0 = max(0, x - pad)
-    y0 = max(0, y - pad)
-    x1 = min(img.shape[1], x + w + pad)
-    y1 = min(img.shape[0], y + h + pad)
-
-    return x0, y0, x1, y1
+    return False
 
 
 def classify_slot(img, cx, cy, cell_w, empty_max_channel):
@@ -135,42 +104,80 @@ def classify_slot(img, cx, cy, cell_w, empty_max_channel):
     return Counter(votes).most_common(1)[0][0]
 
 
-# ✅ FIXED: now returns BoardModel
-def extract_state_from_board(path: str, empty_max_channel: int, rows: int = 3, cols: int = 4) -> BoardModel:
+# ----------------------------------------
+# TUBE DETECTION (NEW CORE LOGIC)
+# ----------------------------------------
+def find_tube_columns(board: np.ndarray, cols: int) -> list[int]:
+    col_strength = np.mean(board, axis=0)
+    col_strength = cv2.GaussianBlur(col_strength, (31, 1), 0)
+
+    peaks = np.argsort(col_strength)[-cols:]
+    return sorted(peaks.tolist())
+
+
+def find_tube_rows(board: np.ndarray, rows: int) -> list[int]:
+    row_strength = np.mean(board, axis=1)
+    row_strength = cv2.GaussianBlur(row_strength, (1, 31), 0)
+
+    peaks = np.argsort(row_strength)[-rows:]
+    return sorted(peaks.tolist())
+
+
+# ----------------------------------------
+# MAIN EXTRACTION
+# ----------------------------------------
+def extract_state_from_board(
+    path: str, empty_max_channel: int, rows: int = 3, cols: int = 4
+) -> BoardModel:
+
     img_bgr = cv2.imread(path)
     if img_bgr is None:
         raise FileNotFoundError(f"Could not read image: {path}")
 
     img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    x0, y0, x1, y1 = detect_board_bounds(img)
-    board = img[y0:y1, x0:x1]
+
+    # Crop UI padding
+    h, w = img.shape[:2]
+    board = img[
+        int(h * 0.12): int(h * 0.88),
+        int(w * 0.12): int(w * 0.88),
+    ]
+
+    cv2.imwrite("debug_cropped_board.png", cv2.cvtColor(board, cv2.COLOR_RGB2BGR))
 
     model = BoardModel(rows=rows, cols=cols, forced_empty_columns=2)
 
-    board_h, board_w, _ = board.shape
-    cell_w = board_w / cols
-    cell_h = board_h / rows
+    # 🔥 Detect real tube positions
+    col_centers = find_tube_columns(board, cols)
+    row_centers = find_tube_rows(board, rows)
 
     for column in model.columns:
         if column.forced_empty:
             column.clear()
             continue
 
-        cx = int(round((column.col + 0.5) * cell_w))
-        cell_top = column.row * cell_h
+        cx = col_centers[column.col]
+        cy_base = row_centers[column.row]
 
         for slot_index, frac in enumerate(SAMPLE_Y_FRACS):
-            cy = int(round(cell_top + frac * cell_h))
+            cy = int(cy_base + (frac - 0.5) * 90)
 
             rgb = patch_rgb(board, cx, cy)
-            token = classify_slot(board, cx, cy, cell_w, empty_max_channel)
+            token = classify_slot(board, cx, cy, 40, empty_max_channel)
 
             column.set_rgb(slot_index, rgb)
             column.set_token(slot_index, token)
 
+            cv2.circle(board, (cx, cy), 3, (255, 0, 0), -1)
+
+    cv2.imwrite("debug_sampling.png", cv2.cvtColor(board, cv2.COLOR_RGB2BGR))
+
     return model
 
 
+# ----------------------------------------
+# VALIDATION
+# ----------------------------------------
 def validate_state(state: State, forced_empty_columns: int = 2):
     counts = Counter(c for tube in state for c in tube)
     valid_counts = len(counts) == 10 and all(v == 4 for v in counts.values())
@@ -178,7 +185,6 @@ def validate_state(state: State, forced_empty_columns: int = 2):
     return valid_counts and valid_trailing_empties, counts
 
 
-# ✅ CLEANED + FIXED
 def extract_state_with_recheck(path: str, rows: int = 3, cols: int = 4) -> BoardModel:
     for empty_max_channel in EMPTY_MAX_CHANNEL_OPTIONS:
         model = extract_state_from_board(path, empty_max_channel, rows=rows, cols=cols)
