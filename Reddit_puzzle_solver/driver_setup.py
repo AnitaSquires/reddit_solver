@@ -7,13 +7,12 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 
+from navigator import enable_colorblind_mode
+
 URL = "https://www.reddit.com/r/ColorPuzzleGame/comments/1syh707/daily_color_puzzle_april_29_2026/"
 SCREENSHOT_PATH = Path("puzzle_board.png")
 
 
-# ----------------------------------------
-# DRIVER SETUP
-# ----------------------------------------
 def build_driver() -> webdriver.Chrome:
     options = Options()
     options.add_argument("--start-maximized")
@@ -21,9 +20,6 @@ def build_driver() -> webdriver.Chrome:
     return webdriver.Chrome(options=options)
 
 
-# ----------------------------------------
-# COOKIE HANDLING
-# ----------------------------------------
 def clear_cookie_overlays(driver: webdriver.Chrome) -> None:
     print("🍪 Attempting to clear cookie modal...")
 
@@ -65,7 +61,7 @@ def clear_cookie_overlays(driver: webdriver.Chrome) -> None:
             time.sleep(1)
             return
 
-        print("⚠️ No cookie button found — removing overlay manually")
+        print("⚠️ Removing overlay manually")
 
         driver.execute_script("""
             document.querySelectorAll('[role="dialog"]').forEach(el => el.remove());
@@ -78,54 +74,35 @@ def clear_cookie_overlays(driver: webdriver.Chrome) -> None:
         print("❌ Cookie handling failed:", e)
 
 
-# ----------------------------------------
-# BOARD CAPTURE
-# ----------------------------------------
 def capture_board(driver: webdriver.Chrome, path: Path = SCREENSHOT_PATH) -> str:
-    print("🔍 Attempting to locate puzzle board...")
+    print("🔍 Capturing puzzle board...")
 
-    try:
-        # 🎯 Target the Devvit container directly
-        element = driver.find_element("css selector", "devvit2-surface")
+    element = driver.find_element("css selector", "devvit2-surface")
+    element.screenshot(str(path))
 
-        print("✅ Devvit surface FOUND — capturing element screenshot")
-        element.screenshot(str(path))
-        print(f"📸 Saved board screenshot to: {path}")
-        return str(path)
-
-    except Exception as e:
-        print("❌ Could not find devvit2-surface:", e)
-
-        # fallback debug screenshot
-        debug_path = Path("debug_full_page.png")
-        driver.save_screenshot(str(debug_path))
-        print(f"📸 Debug screenshot saved to: {debug_path}")
-
-        return str(debug_path)
+    print(f"📸 Saved board screenshot to: {path}")
+    return str(path)
 
 
-# ----------------------------------------
-# MAIN RUN PIPELINE
-# ----------------------------------------
 def run() -> str:
     driver = build_driver()
 
     try:
         driver.get(URL)
 
-        # Wait for page load
         WebDriverWait(driver, 10).until(
             lambda d: d.execute_script("return document.readyState") == "complete"
         )
 
-        # Clear cookies
         clear_cookie_overlays(driver)
         time.sleep(1)
         clear_cookie_overlays(driver)
 
-        print("⏳ Waiting for puzzle to render...")
+        # 🔥 Enable letters
+        enable_colorblind_mode(driver)
+        time.sleep(1)
 
-        # ✅ IMPORTANT: simple wait instead of DOM detection
+        print("⏳ Waiting for puzzle to render...")
         time.sleep(3)
 
         return capture_board(driver)

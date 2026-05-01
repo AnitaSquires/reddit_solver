@@ -10,7 +10,9 @@ Tube = Tuple[str, ...]
 State = Tuple[Tube, ...]
 
 CAPACITY = 4
-SAMPLE_Y_FRACS = [0.18, 0.43, 0.67, 0.90]
+
+# Slightly tighter vertical sampling (more centered)
+SAMPLE_Y_FRACS = [0.15, 0.38, 0.62, 0.85]
 
 
 @dataclass
@@ -76,25 +78,38 @@ class BoardModel:
         """
         h, w, _ = img.shape
 
-        grid_left, grid_right = 0.05, 0.95
-        grid_top, grid_bottom = 0.12, 0.83
+        # 🔥 FIXED GRID — tuned to your actual screenshots
+        grid_left, grid_right = 0.12, 0.88
+        grid_top, grid_bottom = 0.15, 0.85
 
-        cell_w = (grid_right - grid_left) * w / self.cols
-        cell_h = (grid_bottom - grid_top) * h / self.rows
+        usable_w = (grid_right - grid_left) * w
+        usable_h = (grid_bottom - grid_top) * h
+
+        spacing_x = usable_w / (self.cols - 1)
+        spacing_y = usable_h / (self.rows - 1)
+
         start_x = grid_left * w
         start_y = grid_top * h
+
+        # approximate tube height (for slot spacing)
+        tube_height = spacing_y * 0.8
 
         for column in self.columns:
             if column.forced_empty:
                 column.clear()
                 continue
 
-            cell_x = start_x + column.col * cell_w
-            cell_y = start_y + column.row * cell_h
-            cx = int(round(cell_x + cell_w * 0.50))
+            # 🔥 correct tube center positions
+            cx = int(round(start_x + column.col * spacing_x))
+            cy_base = int(round(start_y + column.row * spacing_y))
 
+            # sample 4 slots inside tube
             for slot_index, frac in enumerate(SAMPLE_Y_FRACS):
-                cy = int(round(cell_y + cell_h * frac))
+                cy = int(round(cy_base + (frac - 0.5) * tube_height))
+
+                # clamp for safety
+                cy = max(0, min(h - 1, cy))
+
                 rgb = sampler(img, cx, cy)
                 column.set_rgb(slot_index, rgb)
 
